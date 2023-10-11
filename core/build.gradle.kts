@@ -1,113 +1,46 @@
-import kotlinx.team.infra.mavenPublicationsPom
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
-import java.net.URL
-import java.util.Locale
-import javax.xml.parsers.DocumentBuilderFactory
-import java.io.ByteArrayOutputStream
-import java.io.PrintWriter
-import org.jetbrains.dokka.gradle.AbstractDokkaLeafTask
-
 plugins {
     kotlin("multiplatform")
     kotlin("plugin.serialization")
-    id("org.jetbrains.dokka")
-    `maven-publish`
-}
-
-mavenPublicationsPom {
-    description.set("Kotlin Datetime Library")
+    kotlin("native.cocoapods")
+    id("com.android.library")
 }
 
 base {
     archivesBaseName = "kotlinx-datetime" // doesn't work
 }
 
-val mainJavaToolchainVersion: String by project
-val modularJavaToolchainVersion: String by project
-val serializationVersion: String by project
+val serializationVersion: String = "1.5.1"
+val roboVMVersion: String by project
 
-java {
-    toolchain { languageVersion.set(JavaLanguageVersion.of(mainJavaToolchainVersion)) }
-    with(javaToolchains.launcherFor(toolchain).get().metadata) {
-        logger.info("Using JDK $languageVersion toolchain installed in $installationPath")
-    }
-}
+// Attributes
+val isForRoboVMAttribute = Attribute.of("is_for_robovm", String::class.java)
 
 kotlin {
     explicitApi()
 
-    infra {
-        // Tiers are in accordance with <https://kotlinlang.org/docs/native-target-support.html>
-        // Tier 1
-        target("linuxX64")
-        // Tier 2
-        target("linuxArm64")
-        // Tier 3
-        target("mingwX64")
-        // the following targets are not supported by kotlinx.serialization:
-        /*
-        target("androidNativeArm32")
-        target("androidNativeArm64")
-        target("androidNativeX86")
-        target("androidNativeX64")
-         */
-        // Tier 4 (deprecated, but still in demand)
-        target("linuxArm32Hfp")
-
-        // Darwin targets are listed separately
-        common("darwin") {
-            // Tier 1
-            target("macosX64")
-            target("macosArm64")
-            target("iosSimulatorArm64")
-            target("iosX64")
-            // Tier 2
-            target("watchosSimulatorArm64")
-            target("watchosX64")
-            target("watchosArm32")
-            target("watchosArm64")
-            target("tvosSimulatorArm64")
-            target("tvosX64")
-            target("tvosArm64")
-            target("iosArm64")
-            // Tier 3
-            target("watchosDeviceArm64")
-            // Deprecated for removal
-            target("iosArm32")
-            target("watchosX86")
-        }
-    }
-
     jvm {
         attributes {
-            attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 8)
+            attribute(isForRoboVMAttribute, "standard-jvm")
         }
-        compilations.all {
-            // Set compilation options for JVM target here
-        }
-
     }
+    jvm("robovm") {
+        attributes {
+            attribute(isForRoboVMAttribute, "robovm")
+        }
+    }
+    androidTarget()
+    iosX64()
+    iosArm64()
+    iosSimulatorArm64()
 
-    js {
-        nodejs {
-            testTask {
-                useMocha {
-                    timeout = "30s"
-                }
-            }
+    cocoapods {
+        summary = "Multiplatform module for getting date/time objects."
+        homepage = "https://github.com/Kotlin/kotlinx-datetime"
+        version = "1.0"
+        ios.deploymentTarget = "14.1"
+        framework {
+            baseName = "kotlinx-datetime"
         }
-        compilations.all {
-            kotlinOptions {
-                sourceMap = true
-                moduleKind = "umd"
-                metaInfo = true
-            }
-        }
-//        compilations["main"].apply {
-//            kotlinOptions {
-//                outputFile = "kotlinx-datetime-tmp.js"
-//            }
-//        }
     }
 
     sourceSets.all {
@@ -171,14 +104,14 @@ kotlin {
 
 
     sourceSets {
-        commonMain {
+        val commonMain by getting {
             dependencies {
                 api("org.jetbrains.kotlin:kotlin-stdlib-common")
                 compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-core:$serializationVersion")
             }
         }
 
-        commonTest {
+        val commonTest by getting {
             dependencies {
                 api("org.jetbrains.kotlin:kotlin-test")
             }
@@ -196,199 +129,86 @@ kotlin {
             }
         }
 
-        val jsMain by getting {
+        val robovmMain by getting {
             dependencies {
-                api("org.jetbrains.kotlin:kotlin-stdlib-js")
+                api("org.jetbrains.kotlin:kotlin-stdlib")
+                api("com.mobidevelop.robovm:robovm-rt:$roboVMVersion")
+                api("com.mobidevelop.robovm:robovm-cocoatouch:$roboVMVersion")
+            }
+        }
+
+        val androidMain by getting {
+            dependsOn(jvmMain)
+        }
+        val androidUnitTest by getting
+
+        val nativeMain by creating {
+            dependsOn(commonMain)
+            dependencies {
                 api("org.jetbrains.kotlinx:kotlinx-serialization-core:$serializationVersion")
-                implementation(npm("@js-joda/core", "3.2.0"))
             }
         }
 
-        val jsTest by getting {
-            dependencies {
-                implementation(npm("@js-joda/timezone", "2.3.0"))
-            }
+        val nativeTest by creating {
+            dependsOn(commonTest)
         }
 
-        val nativeMain by getting {
-            dependsOn(commonMain.get())
-            dependencies {
-                api("org.jetbrains.kotlinx:kotlinx-serialization-core:$serializationVersion")
-            }
+        val darwinMain by creating {
+            dependsOn(nativeMain)
         }
 
-        val nativeTest by getting {
+        val darwinTest by creating {
+            dependsOn(nativeTest)
         }
 
-        val darwinMain by getting {
+        val iosX64Main by getting
+        val iosArm64Main by getting
+        val iosSimulatorArm64Main by getting
+        val iosMain by creating {
+            dependsOn(darwinMain)
+            iosX64Main.dependsOn(this)
+            iosArm64Main.dependsOn(this)
+            iosSimulatorArm64Main.dependsOn(this)
         }
-
-        val darwinTest by getting {
+        val iosX64Test by getting
+        val iosArm64Test by getting
+        val iosSimulatorArm64Test by getting
+        val iosTest by creating {
+            dependsOn(darwinTest)
+            iosX64Test.dependsOn(this)
+            iosArm64Test.dependsOn(this)
+            iosSimulatorArm64Test.dependsOn(this)
         }
     }
 }
 
-tasks {
-    val jvmTest by existing(Test::class) {
-        // maxHeapSize = "1024m"
+android {
+    namespace = "kotlinx.datetime"
+    compileSdk = 34
+    defaultConfig {
+        minSdk = 21
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
+    }
+    buildFeatures {
+        buildConfig = true
+        viewBinding = true
     }
 
-    val compileJavaModuleInfo by registering(JavaCompile::class) {
-        val moduleName = "kotlinx.datetime" // this module's name
-        val compileKotlinJvm by getting(KotlinCompile::class)
-        val sourceDir = file("jvm/java9/")
-        val targetDir = compileKotlinJvm.destinationDirectory.map { it.dir("../java9/") }
-
-        // Use a Java 11 compiler for the module info.
-        javaCompiler.set(project.javaToolchains.compilerFor { languageVersion.set(JavaLanguageVersion.of(modularJavaToolchainVersion)) })
-
-        // Always compile kotlin classes before the module descriptor.
-        dependsOn(compileKotlinJvm)
-
-        // Add the module-info source file.
-        source(sourceDir)
-
-        // Also add the module-info.java source file to the Kotlin compile task.
-        // The Kotlin compiler will parse and check module dependencies,
-        // but it currently won't compile to a module-info.class file.
-        // Note that module checking only works on JDK 9+,
-        // because the JDK built-in base modules are not available in earlier versions.
-        val javaVersion = compileKotlinJvm.kotlinJavaToolchain.javaVersion.getOrNull()
-        if (javaVersion?.isJava9Compatible == true) {
-            logger.info("Module-info checking is enabled; $compileKotlinJvm is compiled using Java $javaVersion")
-            compileKotlinJvm.source(sourceDir)
-        } else {
-            logger.info("Module-info checking is disabled")
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            proguardFiles.addAll(listOf(getDefaultProguardFile("proguard-android-optimize.txt"), File("proguard-rules.pro")))
         }
-
-        // Set the task outputs and destination dir
-        outputs.dir(targetDir)
-        destinationDirectory.set(targetDir)
-
-        // Configure JVM compatibility
-        sourceCompatibility = JavaVersion.VERSION_1_9.toString()
-        targetCompatibility = JavaVersion.VERSION_1_9.toString()
-
-        // Set the Java release version.
-        options.release.set(9)
-
-        // Ignore warnings about using 'requires transitive' on automatic modules.
-        // not needed when compiling with recent JDKs, e.g. 17
-        options.compilerArgs.add("-Xlint:-requires-transitive-automatic")
-
-        // Patch the compileKotlinJvm output classes into the compilation so exporting packages works correctly.
-        options.compilerArgs.addAll(listOf("--patch-module", "$moduleName=${compileKotlinJvm.destinationDirectory.get()}"))
-
-        // Use the classpath of the compileKotlinJvm task.
-        // Also ensure that the module path is used instead of classpath.
-        classpath = compileKotlinJvm.libraries
-        modularity.inferModulePath.set(true)
-    }
-
-    // Configure the JAR task so that it will include the compiled module-info class file.
-    val jvmJar by existing(Jar::class) {
-        manifest {
-            attributes("Multi-Release" to true)
-        }
-        from(compileJavaModuleInfo.map { it.destinationDirectory }) {
-            into("META-INF/versions/9/")
-        }
-    }
-
-    // Workaround for https://youtrack.jetbrains.com/issue/KT-58303:
-    // the `clean` task can't delete the expanded.lock file on Windows as it's still held by Gradle, failing the build
-    val clean by existing(Delete::class) {
-        setDelete(fileTree(buildDir) {
-            exclude("tmp/.cache/expanded/expanded.lock")
-        })
-    }
-}
-
-val downloadWindowsZonesMapping by tasks.registering {
-    description = "Updates the mapping between Windows-specific and usual names for timezones"
-    val output = "$projectDir/native/cinterop/public/windows_zones.hpp"
-    val initialFileContents = File(output).readBytes()
-    outputs.file(output)
-    doLast {
-        val documentBuilderFactory = DocumentBuilderFactory.newInstance()
-        // otherwise, parsing fails since it can't find the dtd
-        documentBuilderFactory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
-        val builder = documentBuilderFactory.newDocumentBuilder()
-        val url = URL("https://raw.githubusercontent.com/unicode-org/cldr/master/common/supplemental/windowsZones.xml")
-        val xmlDoc = with(url.openConnection() as java.net.HttpURLConnection) {
-            builder.parse(this.inputStream)
-        }
-        xmlDoc.documentElement.normalize()
-        val mapZones = xmlDoc.getElementsByTagName("mapZone")
-        val mapping = linkedMapOf<String, String>()
-        for (i in 0 until mapZones.length) {
-            val mapZone = mapZones.item(i)
-            val windowsName = mapZone.attributes.getNamedItem("other").nodeValue
-            val usualNames = mapZone.attributes.getNamedItem("type").nodeValue
-            for (usualName in usualNames.split(' ')) {
-                val oldWindowsName = mapping[usualName] // don't do it in `put` to preserve the order in the map
-                if (oldWindowsName == null) {
-                    mapping[usualName] = windowsName
-                } else if (oldWindowsName != windowsName) {
-                    throw Error("Ambiguous mapping: '$usualName' to '$oldWindowsName' and '$windowsName'")
-                }
-            }
-        }
-        val sortedMapping = mapping.toSortedMap()
-        val bos = ByteArrayOutputStream()
-        PrintWriter(bos).use { out ->
-            out.println("""// generated with gradle task `$name`""")
-            out.println("""#include <unordered_map>""")
-            out.println("""#include <string>""")
-            out.println("""static const std::unordered_map<std::string, std::string> standard_to_windows = {""")
-            for ((usualName, windowsName) in sortedMapping) {
-                out.println("\t{ \"$usualName\", \"$windowsName\" },")
-            }
-            out.println("};")
-            out.println("""static const std::unordered_map<std::string, std::string> windows_to_standard = {""")
-            val reverseMap = sortedMapOf<String, String>()
-            for ((usualName, windowsName) in mapping) {
-                if (reverseMap[windowsName] == null) {
-                    reverseMap[windowsName] = usualName
-                }
-            }
-            for ((windowsName, usualName) in reverseMap) {
-                out.println("\t{ \"$windowsName\", \"$usualName\" },")
-            }
-            out.println("};")
-            out.println("""static const std::unordered_map<std::string, size_t> zone_ids = {""")
-            var i = 0
-            for ((usualName, windowsName) in sortedMapping) {
-                out.println("\t{ \"$usualName\", $i },")
-                ++i
-            }
-            out.println("};")
-        }
-        val newFileContents = bos.toByteArray()
-        if (!(initialFileContents contentEquals newFileContents)) {
-            File(output).writeBytes(newFileContents)
-            throw GradleException("The mappings between Windows and IANA timezone names changed. " +
-                "The new mappings were written to the filesystem.")
+        create("releaseTest") {
+            initWith(buildTypes["release"])
         }
     }
 }
 
-tasks.withType<AbstractDokkaLeafTask>().configureEach {
-    pluginsMapConfiguration.set(mapOf("org.jetbrains.dokka.base.DokkaBase" to """{ "templatesDir" : "${projectDir.toString().replace('\\', '/')}/dokka-templates" }"""))
-
-    dokkaSourceSets.configureEach {
-        // reportUndocumented.set(true) // much noisy output about `hashCode` and serializer encoders, decoders etc
-        skipDeprecated.set(true)
-        // hide the `internal` package, which, on JS, has public members generated by Dukat that would get mentioned
-        perPackageOption {
-            matchingRegex.set(".*\\.internal\\..*")
-            suppress.set(true)
-        }
-    }
-}
-
-// TODO: Move to kotlinx.team.infra
-val signingTasks = tasks.withType<Sign>()
-tasks.withType<AbstractPublishToMaven>().configureEach {
-    mustRunAfter(signingTasks)
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.3")
 }
